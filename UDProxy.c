@@ -28,6 +28,10 @@
     #include <unistd.h>
 #endif
 
+#define ALLOW_FIXED_DESTINATION     0
+#define ALLOW_ADDRESS               1
+#define ALLOW_ALL                   2
+
 struct proxy_socket {
     int socket;
     int socket_pair;
@@ -37,6 +41,7 @@ struct proxy_socket {
     struct sockaddr_in remote_addr;
     uint32_t call_id;
     unsigned char bind;
+    unsigned char remote_mode;
 };
 
 typedef int (socket_proxy_t)(struct proxy_socket *socket_in, struct proxy_socket **sockets);
@@ -176,8 +181,15 @@ int createSocket(const char *ip, int port, struct sockaddr_in *server_addr) {
 }
 
 int buildAddress(struct proxy_socket *socket, const char *ip, int port) {
-    if ((!socket) || (!ip) || (!port))
+    if ((!socket) || (!ip))
         return -1;
+
+    if (port == 0)
+        socket->remote_mode = ALLOW_ADDRESS;
+    if (strcmp(ip, "0.0.0.0") == 0) {
+        fprintf(stderr, "WARNING: allowing all trafic\n");
+        socket->remote_mode = ALLOW_ALL;
+    }
 
     memset(&socket->remote_addr, 0, sizeof(struct sockaddr_in));
     socket->remote_addr.sin_family = AF_INET;
@@ -286,6 +298,7 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
     new_sockets[socket_count - 2].remote_addr.sin_port = htons(port);
     new_sockets[socket_count - 2].call_id = call_id_hash;
     new_sockets[socket_count - 2].bind = 1;
+    new_sockets[socket_count - 2].remote_mode = ALLOW_ADDRESS;
 
     new_sockets[socket_count - 1].socket = sockfd2;
     new_sockets[socket_count - 1].socket_pair = socket_count - 1;
@@ -296,6 +309,7 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
     new_sockets[socket_count - 1].remote_addr.sin_port = htons(port);
     new_sockets[socket_count - 1].call_id = call_id_hash;
     new_sockets[socket_count - 1].bind = 0;
+    new_sockets[socket_count - 2].remote_mode = ALLOW_ADDRESS;
 
     char *remote_ip = getIp((struct sockaddr *)&server_addr, remote_ip_buf, sizeof(remote_ip_buf));
     char *local_ip = getIp((struct sockaddr *)&new_sockets[socket_count - 2].remote_addr, local_ip_buf, sizeof(local_ip_buf));
@@ -409,7 +423,7 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
                 while ((*buf2 == ' ') || (*buf2 == '\t'))
                     buf2++;
 
-                strncpy(call_id, buf2, sizeof(call_id));
+                strncpy(call_id, buf2, sizeof(call_id) - 1);
             } else
             if (strncasecmp(buf2, "From:", 6) == 0) {
                 // from field
@@ -497,8 +511,19 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
             }
         }
         if (socket_in->socket_pair > 0) {
-            (*sockets)[socket_in->socket_pair - 1].timestamp = now;
-            written = sendto((*sockets)[socket_in->socket_pair - 1].socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
+            struct proxy_socket *socket_out = &(*sockets)[socket_in->socket_pair - 1];
+            if (socket_out->remote_mode == ALLOW_ADDRESS) {
+                // same address, different port (NAT? - update port)
+                if (client_addr.sin_addr.s_addr == socket_out->remote_addr.sin_addr.s_addr)
+                    socket_out->remote_addr.sin_port = client_addr.sin_port;
+            } else
+            if (socket_out->remote_mode == ALLOW_ALL) {
+                // NAT? - update address
+                socket_out->remote_addr = client_addr;
+            }
+
+            socket_out->timestamp = now;
+            written = sendto(socket_out->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
         }
         if (written < 0)
             written = sendto(socket_in->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
