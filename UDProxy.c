@@ -184,8 +184,10 @@ int buildAddress(struct proxy_socket *socket, const char *ip, int port) {
     if ((!socket) || (!ip))
         return -1;
 
-    if (port == 0)
+    if (port == 0) {
         socket->remote_mode = ALLOW_ADDRESS;
+        port = 5060;
+    }
     if (strcmp(ip, "0.0.0.0") == 0) {
         fprintf(stderr, "WARNING: allowing all trafic\n");
         socket->remote_mode = ALLOW_ALL;
@@ -309,7 +311,7 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
     new_sockets[socket_count - 1].remote_addr.sin_port = htons(port);
     new_sockets[socket_count - 1].call_id = call_id_hash;
     new_sockets[socket_count - 1].bind = 0;
-    new_sockets[socket_count - 2].remote_mode = ALLOW_ADDRESS;
+    new_sockets[socket_count - 1].remote_mode = ALLOW_ADDRESS;
 
     char *remote_ip = getIp((struct sockaddr *)&server_addr, remote_ip_buf, sizeof(remote_ip_buf));
     char *local_ip = getIp((struct sockaddr *)&new_sockets[socket_count - 2].remote_addr, local_ip_buf, sizeof(local_ip_buf));
@@ -326,7 +328,8 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
     if ((!buffer) || (!size) || (!(*size)))
         return buffer;
 
-    char *buffer_clone = (char *)malloc(*size + 4);
+    // for switching ip in contact field
+    char *buffer_clone = (char *)malloc(*size + 1024);
     memcpy(buffer_clone, buffer, *size);
     buffer_clone[*size] = 0;
 
@@ -347,6 +350,8 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
     int sdp_size = 0;
     char new_sdp[4096];
     new_sdp[sdp_size] = 0;
+
+    char ip_buf[0x100];
 
     // may get realloc'ed (copy it)
     struct proxy_socket socket_out = (*sockets)[socket_in->socket_pair - 1];
@@ -385,7 +390,6 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
                             strncat(new_sdp, buf2, sizeof(new_sdp) - sdp_size);
                             sdp_size += strlen(buf2);
 
-                            char ip_buf[0x100];
                             char *remote_ip = getIp((struct sockaddr *)&socket_out.local_addr, ip_buf, sizeof(ip_buf));
                             if (remote_ip) {
                                 strncat(new_sdp, remote_ip, sizeof(new_sdp) - sdp_size);
@@ -432,7 +436,38 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
                 // to field
             } else
             if (strncasecmp(buf2, "Contact:", 8) == 0) {
-                // Contact field
+                char *address_offset = strchr(buf2, '@');
+                if (address_offset) {
+                    address_offset ++;
+                    char *end_offset = strchr(address_offset, '>');
+                    if (end_offset) {
+                        int ip_port_len = end_offset - address_offset;
+                        if (ip_port_len > 0) {
+                            char *ip_rewrite = getIp((struct sockaddr *)&socket_out.local_addr, ip_buf, sizeof(ip_buf));
+                            if (ip_rewrite) {
+                                char ip_port_buffer[0x140];
+                                ip_port_buffer[0] = 0;
+                                snprintf(ip_port_buffer, sizeof(ip_port_buffer), "%s:%i", ip_rewrite, (int)ntohs(socket_out.local_addr.sin_port));
+                                int new_ip_port_len = strlen(ip_port_buffer);
+                                if (new_ip_port_len == ip_port_len) {
+                                    // no memmove
+                                    memcpy(buffer + (address_offset - buffer_clone), ip_port_buffer, new_ip_port_len);
+                                } else {
+                                    int delta = new_ip_port_len - ip_port_len;
+                                    memmove(buffer + (address_offset - buffer_clone) + new_ip_port_len, buffer + (address_offset - buffer_clone) + ip_port_len, *size - (address_offset - buffer_clone));
+                                    memcpy(buffer + (address_offset - buffer_clone), ip_port_buffer, new_ip_port_len);
+
+                                    *size += delta;
+                                    buffer[*size] = 0;
+                                    memcpy(buffer_clone, buffer, *size);
+                                    buffer_clone[*size] = 0;
+
+                                    next_buf += delta;
+                                }
+                            }
+                        }
+                    }
+                }
             } else
             if (strncasecmp(buf2, "Content-length:", 15) == 0) {
                 content_length_offset = buf2 - buffer_clone;
@@ -474,7 +509,9 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
         free(buffer);
         buffer = new_buffer;
         *size = strlen(new_buffer);
+
     }
+
     free(buffer_clone);
     return buffer;
 }
@@ -489,14 +526,15 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
     struct sockaddr_in client_addr;
 
     int written = -1;
-    char *buffer = (char *)malloc(0x10000);
+    // reserve a little bit more for "in place" rewrite
+    char *buffer = (char *)malloc(0x10000 + 1024);
     addr_size = sizeof(client_addr);
     int size = recvfrom(socket_in->socket, buffer, 0xFFFF, 0, (struct sockaddr *)&client_addr, &addr_size);
     if (size > 0) {
         socket_in->timestamp = now;
         if (socket_in->is_sip) {
-            // ensure null-terminated
-            buffer[size] = 0;
+            // ensure null-terminated and followed by zeros
+            memset(buffer + size, 0, 0x10000 + 1024 - size);
             buffer = filterBuffer(buffer, &size, socket_in, sockets);
         } else {
             // char remote_ip_buf[0x100];
@@ -683,6 +721,7 @@ int main(int argc, char **argv) {
     sockets[0].is_sip = 1;
     sockets[0].socket_pair = 2;
     sockets[0].local_addr = in_addr;
+    sockets[0].remote_mode = ALLOW_FIXED_DESTINATION;
     if (argc == 9)
         buildAddress(&sockets[0], argv[7], atoi(argv[8]));
     else
@@ -693,6 +732,8 @@ int main(int argc, char **argv) {
     sockets[1].is_sip = 1;
     sockets[1].socket_pair = 1;
     sockets[1].local_addr = out_addr;
+    sockets[1].remote_mode = ALLOW_FIXED_DESTINATION;
+
     buildAddress(&sockets[1], argv[3], atoi(argv[4]));
 
     while (1) {
