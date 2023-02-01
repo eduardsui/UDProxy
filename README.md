@@ -19,7 +19,7 @@ Linux, FreeBSD, macOS:
 $ gcc -O2 UDProxy.c -o UDProxy
 ```
 
-Windows (dokany):
+Windows:
 ```
 gcc -O2 UDProxy.c -o UDProxy
 ```
