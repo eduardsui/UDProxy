@@ -32,7 +32,7 @@
 #define ALLOW_ADDRESS               1
 #define ALLOW_ALL                   2
 
-#define DEBUG_PRINT(f, ...)	fprintf(stderr, "%s [%i] ",timestamp(), __LINE__), fprintf(stderr, (f), ##__VA_ARGS__)		
+#define DEBUG_PRINT(f, ...)         fprintf(stderr, "%s [%i] ",timestamp(), __LINE__), fprintf(stderr, (f), ##__VA_ARGS__)
 
 static char * timestamp() {
     time_t now = time(NULL); 
@@ -211,7 +211,7 @@ int buildAddress(struct proxy_socket *socket, const char *ip, int port) {
     if ((host) && (host->h_length > 0))
         socket->remote_addr.sin_addr.s_addr = ((struct in_addr *)(host->h_addr))->s_addr;
     else
-    	socket->remote_addr.sin_addr.s_addr = inet_addr(ip);
+        socket->remote_addr.sin_addr.s_addr = inet_addr(ip);
 
     DEBUG_PRINT("added ip/port: %s:%i\n", ip, port);
     return 0;
@@ -550,11 +550,11 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
         if (written < 0) {
             if ((client_addr.sin_addr.s_addr == socket_in->remote_addr.sin_addr.s_addr) && (client_addr.sin_port == socket_in->remote_addr.sin_port)) {
                 // write will cause echo
-            	char remote_ip_buf[0x100];
-            	char local_ip_buf[0x100];
-            	char *remote_ip = getIp((struct sockaddr *)&client_addr, remote_ip_buf, sizeof(remote_ip_buf));
-            	char *local_ip = getIp((struct sockaddr *)&socket_in->remote_addr, local_ip_buf, sizeof(local_ip_buf));
-            	DEBUG_PRINT("RTP echo pachet %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
+                char remote_ip_buf[0x100];
+                char local_ip_buf[0x100];
+                char *remote_ip = getIp((struct sockaddr *)&client_addr, remote_ip_buf, sizeof(remote_ip_buf));
+                char *local_ip = getIp((struct sockaddr *)&socket_in->remote_addr, local_ip_buf, sizeof(local_ip_buf));
+                DEBUG_PRINT("RTP echo pachet %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
                 return size;
             }
             written = sendto(socket_in->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
