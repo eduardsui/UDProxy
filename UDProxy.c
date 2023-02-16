@@ -557,7 +557,7 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
             	DEBUG_PRINT("RTP echo pachet %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
 
             	local_ip = getIp((struct sockaddr *)&socket_in->local_addr, local_ip_buf, sizeof(local_ip_buf));
-            	DEBUG_PRINT("    local addr is %s:%i\n", local_ip, (int)ntohs(socket_in->local_addr.sin_port), local_ip, (int)ntohs(socket_in->local_addr.sin_port));
+            	DEBUG_PRINT("    local addr is %s:%i\n", local_ip, local_ip, (int)ntohs(socket_in->local_addr.sin_port));
                 return size;
             }
             written = sendto(socket_in->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
