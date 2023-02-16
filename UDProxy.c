@@ -32,6 +32,15 @@
 #define ALLOW_ADDRESS               1
 #define ALLOW_ALL                   2
 
+#define DEBUG_PRINT(f, ...)	fprintf(stderr, "%s [%i] ",timestamp(), __LINE__), fprintf(stderr, (f), ##__VA_ARGS__)		
+
+static char * timestamp() {
+    time_t now = time(NULL); 
+    char * time = asctime(gmtime(&now));
+    time[strlen(time)-1] = '\0';    // Remove \n
+    return time;
+}
+
 struct proxy_socket {
     int socket;
     int socket_pair;
@@ -160,6 +169,7 @@ int createSocket(const char *ip, int port, struct sockaddr_in *server_addr) {
  
     n = bind(sockfd, (struct sockaddr*)server_addr, sizeof(struct sockaddr_in));
     if (n < 0) {
+        DEBUG_PRINT("error binding to %s:%i\n", ip, port);
         perror("bind error");
 #ifdef _WIN32
         closesocket(sockfd);
@@ -189,7 +199,7 @@ int buildAddress(struct proxy_socket *socket, const char *ip, int port) {
         port = 5060;
     }
     if (strcmp(ip, "0.0.0.0") == 0) {
-        fprintf(stderr, "WARNING: allowing all trafic\n");
+        DEBUG_PRINT("WARNING: allowing all trafic\n");
         socket->remote_mode = ALLOW_ALL;
     }
 
@@ -203,7 +213,7 @@ int buildAddress(struct proxy_socket *socket, const char *ip, int port) {
     else
     	socket->remote_addr.sin_addr.s_addr = inet_addr(ip);
 
-    fprintf(stderr, "added ip/port: %s:%i\n", ip, port);
+    DEBUG_PRINT("added ip/port: %s:%i\n", ip, port);
     return 0;
 }
 
@@ -211,7 +221,7 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
     if ((!ip) || (!ip[0]) || (port <= 0) || (!socket_in) || (!socket_in->socket_pair) || (!sockets) || (!call_id) || (!call_id[0]))
         return -1;
 
-    fprintf(stderr, "audio proxy for %s: %s:%i\n", call_id, ip, port);
+    DEBUG_PRINT("audio proxy for %s: %s:%i\n", call_id, ip, port);
 
     // may get realloc'ed (copy it)
     struct proxy_socket socket_out = (*sockets)[socket_in->socket_pair - 1];
@@ -222,25 +232,9 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
 
     int socket_count = 0;
     int hash_found = 0;
-    while ((*sockets)[socket_count].socket > 0) {
-        if ((!(*sockets)[socket_count].is_sip)) {
-            if ((*sockets)[socket_count].call_id == call_id_hash) {
-                if ((!(*sockets)[socket_count].bind) && (*sockets)[socket_count].local_addr.sin_port != htons(port)) {
-                    (*sockets)[socket_count].local_addr.sin_port = htons(port);
-                    (*sockets)[socket_count].remote_addr.sin_port = htons(port);
-
-                    char *remote_ip = getIp((struct sockaddr *)&(*sockets)[socket_count].local_addr, remote_ip_buf, sizeof(remote_ip_buf));
-                    char *local_ip = getIp((struct sockaddr *)&(*sockets)[socket_count].remote_addr, local_ip_buf, sizeof(local_ip_buf));
-                    fprintf(stderr, ">>> %i: set port %s:%i => %s:%i\n", socket_count, remote_ip, (int)ntohs((*sockets)[socket_count].local_addr.sin_port), local_ip, (int)ntohs((*sockets)[socket_count].remote_addr.sin_port));
-
-                    if (bind((*sockets)[socket_count].socket, (struct sockaddr *)&(*sockets)[socket_count].local_addr, sizeof(struct sockaddr_in)) < 0)
-                        perror("bind error");
-                }
-                hash_found = 1;
-            }
-        }
+    while ((*sockets)[socket_count].socket > 0)
         socket_count ++;
-    }
+
     if (hash_found)
         return 0;
 
@@ -251,7 +245,8 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
     server_addr.sin_port = htons(port);
 
     if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(struct sockaddr_in)) < 0) {
-        perror("bind error");
+        char *remote_ip = getIp((struct sockaddr *)&server_addr, remote_ip_buf, sizeof(remote_ip_buf));
+        DEBUG_PRINT("already binding to %s:%i\n", remote_ip, port);
 #ifdef _WIN32
         closesocket(sockfd);
 #else
@@ -266,7 +261,7 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
 
     struct proxy_socket *new_sockets = (struct proxy_socket *)realloc(*sockets, (socket_count + 1) * sizeof(struct proxy_socket));
     if (!new_sockets) {
-        fprintf(stderr, "error allocating buffer\n");
+        DEBUG_PRINT("error allocating buffer\n");
 #ifdef _WIN32
         closesocket(sockfd);
         closesocket(sockfd2);
@@ -315,7 +310,7 @@ int createMediaProxy(const char *call_id, const char *ip, int port, struct proxy
 
     char *remote_ip = getIp((struct sockaddr *)&server_addr, remote_ip_buf, sizeof(remote_ip_buf));
     char *local_ip = getIp((struct sockaddr *)&new_sockets[socket_count - 2].remote_addr, local_ip_buf, sizeof(local_ip_buf));
-    fprintf(stderr, "set pair %s:%i => %s:%i\n", remote_ip, (int)ntohs(server_addr.sin_port), local_ip, (int)ntohs(new_sockets[socket_count - 2].remote_addr.sin_port));
+    DEBUG_PRINT("set pair %s:%i => %s:%i\n", remote_ip, (int)ntohs(server_addr.sin_port), local_ip, (int)ntohs(new_sockets[socket_count - 2].remote_addr.sin_port));
 
     memset(&new_sockets[socket_count], 0, sizeof(struct proxy_socket));
 
@@ -536,17 +531,6 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
             // ensure null-terminated and followed by zeros
             memset(buffer + size, 0, 0x10000 + 1024 - size);
             buffer = filterBuffer(buffer, &size, socket_in, sockets);
-        } else {
-            // char remote_ip_buf[0x100];
-            // char local_ip_buf[0x100];
-            // char *remote_ip = getIp((struct sockaddr *)&client_addr, remote_ip_buf, sizeof(remote_ip_buf));
-            // char *local_ip = getIp((struct sockaddr *)&socket_in->remote_addr, local_ip_buf, sizeof(local_ip_buf));
-            // fprintf(stderr, "RTP %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
-            if ((client_addr.sin_addr.s_addr == socket_in->remote_addr.sin_addr.s_addr) && (client_addr.sin_port == socket_in->remote_addr.sin_port)) {
-                // write will cause echo
-                fprintf(stderr, "echo packet\n");
-                return size;
-            }
         }
         if (socket_in->socket_pair > 0) {
             struct proxy_socket *socket_out = &(*sockets)[socket_in->socket_pair - 1];
@@ -563,8 +547,21 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
             socket_out->timestamp = now;
             written = sendto(socket_out->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
         }
-        if (written < 0)
+        if (written < 0) {
+            if ((client_addr.sin_addr.s_addr == socket_in->remote_addr.sin_addr.s_addr) && (client_addr.sin_port == socket_in->remote_addr.sin_port)) {
+                // write will cause echo
+            	char remote_ip_buf[0x100];
+            	char local_ip_buf[0x100];
+            	char *remote_ip = getIp((struct sockaddr *)&client_addr, remote_ip_buf, sizeof(remote_ip_buf));
+            	char *local_ip = getIp((struct sockaddr *)&socket_in->remote_addr, local_ip_buf, sizeof(local_ip_buf));
+            	DEBUG_PRINT("RTP echo pachet %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
+
+            	local_ip = getIp((struct sockaddr *)&socket_in->local_addr, local_ip_buf, sizeof(local_ip_buf));
+            	DEBUG_PRINT("    local addr is %s:%i\n", local_ip, (int)ntohs(socket_in->local_addr.sin_port), local_ip, (int)ntohs(socket_in->local_addr.sin_port));
+                return size;
+            }
             written = sendto(socket_in->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
+        }
         if (written < 0)
             perror("sendto");
     }
@@ -606,7 +603,7 @@ void clearSockets(struct proxy_socket *sockets, int timeout_seconds) {
             } else
                 i ++;
         }
-        fprintf(stderr, "cleaned %i sockets\n", needs_cleaning);
+        DEBUG_PRINT("cleaned %i sockets\n", needs_cleaning);
     }
 }
 
@@ -721,6 +718,7 @@ int main(int argc, char **argv) {
     sockets[0].is_sip = 1;
     sockets[0].socket_pair = 2;
     sockets[0].local_addr = in_addr;
+    sockets[0].bind = 1;
     sockets[0].remote_mode = ALLOW_FIXED_DESTINATION;
     if (argc == 9)
         buildAddress(&sockets[0], argv[7], atoi(argv[8]));
@@ -732,6 +730,7 @@ int main(int argc, char **argv) {
     sockets[1].is_sip = 1;
     sockets[1].socket_pair = 1;
     sockets[1].local_addr = out_addr;
+    sockets[1].bind = 1;
     sockets[1].remote_mode = ALLOW_FIXED_DESTINATION;
 
     buildAddress(&sockets[1], argv[3], atoi(argv[4]));
