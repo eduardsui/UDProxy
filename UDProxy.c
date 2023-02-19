@@ -190,6 +190,44 @@ int createSocket(const char *ip, int port, struct sockaddr_in *server_addr) {
     return sockfd;
 }
 
+void clearSockets(struct proxy_socket *sockets, int timeout_seconds, uint32_t call_id_hash) {
+    int socket_count = 0;
+    time_t now = time(NULL);
+    int needs_cleaning = 0;
+    int i;
+    int j;
+
+    while (sockets[socket_count].socket > 0) {
+        if (!sockets[socket_count].is_sip) {
+            if (((call_id_hash) && (sockets[socket_count].call_id == call_id_hash)) || (now - sockets[socket_count].timestamp >= timeout_seconds)) {
+                needs_cleaning ++;
+
+                if (sockets[socket_count].socket_pair > 0)
+                    sockets[sockets[socket_count].socket_pair - 1].timestamp = 0;
+            }
+        }
+        socket_count ++;
+    }
+
+    if (needs_cleaning) {
+        i = 0;
+        while (i < socket_count) {
+            if (((call_id_hash) && (sockets[i].call_id == call_id_hash)) || (now - sockets[i].timestamp >= timeout_seconds)) {
+#ifdef _WIN32
+                closesocket(sockets[i].socket);
+#else
+                close(sockets[i].socket);
+#endif
+                for (j = i; j < socket_count; j ++)
+                    sockets[j] = sockets[j + 1];
+                socket_count --;
+            } else
+                i ++;
+        }
+        DEBUG_PRINT("cleaned %i sockets\n", needs_cleaning);
+    }
+}
+
 int buildAddress(struct proxy_socket *socket, const char *ip, int port) {
     if ((!socket) || (!ip))
         return -1;
@@ -351,6 +389,12 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
     // may get realloc'ed (copy it)
     struct proxy_socket socket_out = (*sockets)[socket_in->socket_pair - 1];
 
+    int remove_session = 0;
+    if (*size > 12) {
+        if ((memcmp(buffer, "BYE", 3) == 0) || (memcmp(buffer, "CANCEL", 6) == 0))
+            remove_session = 1;
+    }
+
     while ((buf2) && (buf2[0])) {
         next_buf = strstr(buf2, "\r\n");
         if (next_buf)
@@ -508,6 +552,11 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
     }
 
     free(buffer_clone);
+
+    if ((remove_session) && (call_id[0])) {
+        DEBUG_PRINT("removing session %s\n", call_id);
+        clearSockets(*sockets, 480, murmurhash(call_id));
+    }
     return buffer;
 }
 
@@ -565,45 +614,6 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
     free(buffer);
     return written;
 }
-
-void clearSockets(struct proxy_socket *sockets, int timeout_seconds) {
-    int socket_count = 0;
-    time_t now = time(NULL);
-    int needs_cleaning = 0;
-    int i;
-    int j;
-
-    while (sockets[socket_count].socket > 0) {
-        if (!sockets[socket_count].is_sip) {
-            if (now - sockets[socket_count].timestamp >= timeout_seconds) {
-                needs_cleaning ++;
-
-                if (sockets[socket_count].socket_pair > 0)
-                    sockets[sockets[socket_count].socket_pair - 1].timestamp = 0;
-            }
-        }
-        socket_count ++;
-    }
-
-    if (needs_cleaning) {
-        i = 0;
-        while (i < socket_count) {
-            if (now - sockets[i].timestamp >= timeout_seconds) {
-#ifdef _WIN32
-                closesocket(sockets[i].socket);
-#else
-                close(sockets[i].socket);
-#endif
-                for (j = i; j < socket_count; j ++)
-                    sockets[j] = sockets[j + 1];
-                socket_count --;
-            } else
-                i ++;
-        }
-        DEBUG_PRINT("cleaned %i sockets\n", needs_cleaning);
-    }
-}
-
 
 #ifdef _WIN32
 int waitIO(struct proxy_socket **sockets, socket_proxy_t proxy, int ms) {
@@ -734,8 +744,8 @@ int main(int argc, char **argv) {
 
     while (1) {
         waitIO(&sockets, proxyIO, 10000);
-        // 48 seconds timeout
-        clearSockets(sockets, 48);
+        // 480 seconds timeout
+        clearSockets(sockets, 480, 0);
     }
 
     free(sockets);
