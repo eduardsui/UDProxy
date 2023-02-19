@@ -32,6 +32,8 @@
 #define ALLOW_ADDRESS               1
 #define ALLOW_ALL                   2
 
+#define SOCKET_CLEAN_TIMEOUT        2880
+
 #define DEBUG_PRINT(f, ...)         fprintf(stderr, "%s [%i] ",timestamp(), __LINE__), fprintf(stderr, (f), ##__VA_ARGS__)
 
 static char * timestamp() {
@@ -555,7 +557,7 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
 
     if ((remove_session) && (call_id[0])) {
         DEBUG_PRINT("removing session %s\n", call_id);
-        clearSockets(*sockets, 480, murmurhash(call_id));
+        clearSockets(*sockets, SOCKET_CLEAN_TIMEOUT, murmurhash(call_id));
     }
     return buffer;
 }
@@ -744,8 +746,7 @@ int main(int argc, char **argv) {
 
     while (1) {
         waitIO(&sockets, proxyIO, 10000);
-        // 480 seconds timeout
-        clearSockets(sockets, 480, 0);
+        clearSockets(sockets, SOCKET_CLEAN_TIMEOUT, 0);
     }
 
     free(sockets);
