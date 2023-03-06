@@ -579,6 +579,19 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
     if (size > 0) {
         socket_in->timestamp = now;
         if (socket_in->is_sip) {
+            struct proxy_socket *socket_out = &(*sockets)[socket_in->socket_pair - 1];
+
+            if ((socket_in->remote_mode != ALLOW_ALL) &&
+                (client_addr.sin_addr.s_addr != socket_in->local_addr.sin_addr.s_addr) && 
+                (client_addr.sin_addr.s_addr != socket_out->local_addr.sin_addr.s_addr) && 
+                (client_addr.sin_addr.s_addr != socket_in->remote_addr.sin_addr.s_addr) && 
+                (client_addr.sin_addr.s_addr != socket_out->remote_addr.sin_addr.s_addr)) {
+                char remote_ip_buf[0x100];
+                char *remote_ip = getIp((struct sockaddr *)&client_addr, remote_ip_buf, sizeof(remote_ip_buf));
+                DEBUG_PRINT("invalid source IP: %s\n", remote_ip);
+                free(buffer);
+                return 0;
+            }
             // ensure null-terminated and followed by zeros
             memset(buffer + size, 0, 0x10000 + 1024 - size);
             buffer = filterBuffer(buffer, &size, socket_in, sockets);
