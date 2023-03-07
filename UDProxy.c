@@ -582,8 +582,6 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
             struct proxy_socket *socket_out = &(*sockets)[socket_in->socket_pair - 1];
 
             if ((socket_in->remote_mode != ALLOW_ALL) &&
-                (client_addr.sin_addr.s_addr != socket_in->local_addr.sin_addr.s_addr) && 
-                (client_addr.sin_addr.s_addr != socket_out->local_addr.sin_addr.s_addr) && 
                 (client_addr.sin_addr.s_addr != socket_in->remote_addr.sin_addr.s_addr) && 
                 (client_addr.sin_addr.s_addr != socket_out->remote_addr.sin_addr.s_addr)) {
                 char remote_ip_buf[0x100];
