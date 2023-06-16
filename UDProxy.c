@@ -222,11 +222,16 @@ void clearSockets(struct proxy_socket *sockets, int timeout_seconds, uint32_t ca
 #endif
                 for (j = i; j < socket_count; j ++)
                     sockets[j] = sockets[j + 1];
+
                 socket_count --;
+                for (j = 0; j < socket_count; j ++) {
+                    if (sockets[j].socket_pair > i)
+                        sockets[j].socket_pair --;
+                }
             } else
                 i ++;
         }
-        DEBUG_PRINT("cleaned %i sockets\n", needs_cleaning);
+        DEBUG_PRINT("cleaned %i sockets (%i sockets remaining)\n", needs_cleaning, socket_count);
     }
 }
 
@@ -616,7 +621,7 @@ int proxyIO(struct proxy_socket *socket_in, struct proxy_socket **sockets) {
                 char local_ip_buf[0x100];
                 char *remote_ip = getIp((struct sockaddr *)&client_addr, remote_ip_buf, sizeof(remote_ip_buf));
                 char *local_ip = getIp((struct sockaddr *)&socket_in->remote_addr, local_ip_buf, sizeof(local_ip_buf));
-                DEBUG_PRINT("RTP echo pachet %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
+                DEBUG_PRINT("RTP echo packet %s:%i => %s:%i\n", remote_ip, (int)ntohs(client_addr.sin_port), local_ip, (int)ntohs(socket_in->remote_addr.sin_port));
                 return size;
             }
             written = sendto(socket_in->socket, buffer, size, 0, (struct sockaddr*)&socket_in->remote_addr, sizeof(socket_in->remote_addr));
