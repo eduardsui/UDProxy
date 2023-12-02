@@ -411,6 +411,7 @@ char *filterBuffer(char *buffer, int *size, struct proxy_socket *socket_in, stru
             if ((buf2[0]) && (buf2[1])) {
                 switch (buf2[0]) {
                     case 'c':
+                    case 'o':
                         buf3 = strstr(buf2, "IP4 ");
                         if (!buf3)
                             buf3 = strstr(buf2, "IP6 ");
